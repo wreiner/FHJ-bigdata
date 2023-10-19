@@ -1,0 +1,22 @@
+[Unit]
+Description=Hadoop DFS namenode and datanode & yarn service
+After=syslog.target network-online.target
+
+[Service]
+User=hduser
+Group=hadoop
+Type=oneshot
+ExecStartPre=/usr/local/hadoop/sbin/start-dfs.sh
+ExecStart=/usr/local/hadoop/sbin/start-yarn.sh
+ExecStop=/usr/local/hadoop/sbin/stop-dfs.sh
+ExecStopPost=/usr/local/hadoop/sbin/stop-yarn.sh
+WorkingDirectory=/usr/local/hadoop
+RemainAfterExit=yes
+Environment=JAVA_HOME=/usr/lib/jvm/jdk
+Environment=HADOOP_HOME=/usr/local/hadoop
+Environment=YARN_HOME=/usr/local/hadoop
+Environment=HADOOP_OPTS="-Djava.library.path=/usr/local/hadoop/lib/native"
+Environment=PDSH_RCMD_TYPE=ssh
+
+[Install]
+WantedBy=multi-user.target

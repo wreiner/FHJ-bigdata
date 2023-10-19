@@ -1,0 +1,17 @@
+# Java (a copy of what is already in /etc/profile.d/java.sh)
+export JAVA_HOME=/usr/lib/jvm/jdk
+
+# Hadoop export
+export HADOOP_INSTALL=/usr/local/hadoop
+export HADOOP_HOME=$HADOOP_INSTALL
+export HADOOP_MAPRED_HOME=$HADOOP_INSTALL
+export HADOOP_COMMON_HOME=$HADOOP_INSTALL
+export HADOOP_HDFS_HOME=$HADOOP_INSTALL
+export HADOOP_YARN_HOME=$HADOOP_INSTALL
+export HADOOP_COMMON_LIB_NATIVE_DIR=$HADOOP_INSTALL/lib/native
+export HADOOP_OPTS="-Djava.library.path=$HADOOP_INSTALL/lib/native"
+export YARN_HOME=$HADOOP_HOME
+
+export PATH=$PATH:$JAVA_HOME/bin:$HADOOP_INSTALL/bin:$HADOOP_INSTALL/sbin
+
+export PDSH_RCMD_TYPE=ssh

@@ -1,0 +1,239 @@
+---
+- name: Prerequistes
+  hosts: hadoop_nodes
+  become: true
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Install packages
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - ssh
+        - pdsh
+        - openjdk-11-jdk
+        - openssh-server
+        - nmap
+        - curl
+        - wget
+        - vim
+        - net-tools
+        - sudo
+
+    - name: Set a hostname
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+      register: hostname_set
+
+    - name: Reboot for hostname to take effect
+      ansible.builtin.reboot:
+      when: hostname_set.changed
+
+    - name: Generate /etc/hosts file
+      ansible.builtin.template:
+        src: hosts.j2
+        dest: /etc/hosts
+
+    - name: Create group
+      ansible.builtin.group:
+        name: hadoop
+        state: present
+
+    - name: Create hduser with password hduser
+      ansible.builtin.user:
+        name: hduser
+        comment: Hadoop user
+        group: hadoop
+        shell: /bin/bash
+        ssh_key_bits: 2048
+        ssh_key_file: .ssh/id_rsa
+        generate_ssh_key: yes
+        password: $6$d7TgsVG0y5gsnl2R$xSlv3L7IOoY1ZgASM7XAteNScB/48Cmf0h8TeEJ29LCUtO7khFkNEld2FS.sv.r6NIsdT6XaiowzC3QtZfqc1.
+
+    - name: Create java env symlink
+      ansible.builtin.file:
+        src: /usr/lib/jvm/java-11-openjdk-amd64
+        dest: /usr/lib/jvm/jdk
+        state: link
+
+    - name: Deploy /etc/profile.d/java.sh
+      ansible.builtin.copy:
+        src: profile.d/java.sh
+        dest: /etc/profile.d/java.sh
+        mode: '0644'
+
+- name: Distribute ssh keys
+  hosts: hadoop_nodes
+  become: true
+  tasks:
+    - name: Get ssh keys from nodes
+      slurp:
+        src: /home/hduser/.ssh/id_rsa.pub
+      register: ssh_keys
+
+    - name: Deploy ssh keys to nodes
+      authorized_key:
+        user: hduser
+        key: "{{ item[1]  }}"
+      delegate_to: "{{ item[0] }}"
+      with_nested:
+        - "{{ groups['hadoop_nodes'] }}"
+        - "{{ ssh_keys['content'] | b64decode }}"
+
+- name: Install hadoop
+  hosts: hadoop_nodes
+  become: true
+  tasks:
+    - name: Download hadoop archive check (SHA512)
+      ansible.builtin.get_url:
+        url: https://dlcdn.apache.org/hadoop/common/hadoop-3.2.4/hadoop-3.2.4.tar.gz
+        dest: /usr/local
+        checksum: sha512:af45cbc9c8786dbe65c41be600f136218d4f3e8e4ec947c64c0bb4f919cedc91cdc5a55026f41b0037470c56ba7f625b29cb4935f7b6d5f0b242146c4e672af9
+        group: hadoop
+        owner: hduser
+
+    - name: Unpack hadoop
+      ansible.builtin.unarchive:
+        src: /usr/local/hadoop-3.2.4.tar.gz
+        dest: /usr/local
+        remote_src: yes
+        group: hadoop
+        owner: hduser
+
+    - name: Create symlink for hadoop
+      ansible.builtin.file:
+        src: /usr/local/hadoop-3.2.4
+        dest: /usr/local/hadoop
+        state: link
+        group: hadoop
+        owner: hduser
+
+    - name: Deploy /usr/local/hadoop/etc/hadoop/hadoop-env.sh
+      ansible.builtin.copy:
+        src: profile.d/java.sh
+        dest: /usr/local/hadoop/etc/hadoop/hadoop-env.sh
+        group: hadoop
+        owner: hduser
+        mode: '0644'
+
+    - name: Deploy hadoop config files
+      ansible.builtin.copy:
+        src: "hadoop/{{ item }}"
+        dest: "/usr/local/hadoop/etc/hadoop/{{ item }}"
+        mode: '0644'
+        group: hadoop
+        owner: hduser
+      loop:
+        - hdfs-site.xml
+        - mapred-site.xml
+
+    - name: Deploy hadoop config files
+      ansible.builtin.template:
+        src: "hadoop/{{ item }}.j2"
+        dest: "/usr/local/hadoop/etc/hadoop/{{ item }}"
+        mode: '0644'
+        group: hadoop
+        owner: hduser
+      loop:
+        - core-site.xml
+        - yarn-site.xml
+
+    - name: Create needed directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        recurse: true
+        group: hadoop
+        owner: hduser
+      loop:
+        - /usr/local/hadoop/hadoopdata/hdfs/tmp
+        - /usr/local/hadoop/hadoopdata/hdfs/namenode
+        - /usr/local/hadoop/hadoopdata/hdfs/datanode
+        - /usr/local/hadoop/hadoopdata/hdfs/input
+
+    - name: Generate master file
+      ansible.builtin.template:
+        src: hadoop/master.j2
+        dest: /usr/local/hadoop/etc/hadoop/master
+        group: hadoop
+        owner: hduser
+
+    - name: Generate slaves and workers file
+      ansible.builtin.template:
+        src: hadoop/slaves_workers.j2
+        dest: "/usr/local/hadoop/etc/hadoop/{{ item }}"
+        group: hadoop
+        owner: hduser
+      loop:
+        - slaves
+        - workers
+
+- name: Setup user environment
+  hosts: hadoop_nodes
+  become: true
+  tasks:
+    - name: Insert/Update configuration using a local file and validate it
+      ansible.builtin.blockinfile:
+        block: "{{ lookup('ansible.builtin.file', 'bashrc') }}"
+        path: /home/hduser/.bashrc
+        group: hadoop
+        owner: hduser
+        backup: yes
+
+- name: Format hdfs
+  hosts: hadoop_master
+  become: true
+  tasks:
+    - name: Remove interactive shell check from .bashrc
+      replace:
+        path: /home/hduser/.bashrc
+        regexp: '^case \$\- in(.*\n)*esac$'
+        replace: ''
+
+    - name: Format namenode
+      shell:
+        cmd: su - hduser -c 'source /home/hduser/.bashrc && hdfs namenode -format'
+      when: hdfs_format is defined and hdfs_format|bool
+
+- name: Setup master node specifics
+  hosts: hadoop_master
+  become: true
+  tasks:
+    - name: Deploy systemd unit file
+      ansible.builtin.copy:
+        src: systemd/hadoop.service
+        dest: /etc/systemd/system/hadoop.service
+        group: root
+        owner: root
+        mode: '0644'
+      notify: "Restart hadoop"
+  handlers:
+    - name: "Restart hadoop"
+      systemd:
+        state: restarted
+        name: hadoop
+        daemon_reload: yes
+        enabled: yes
+
+- name: Check if everything is running
+  hosts: hadoop_nodes
+  become: true
+  tasks:
+    - name: Get jps output
+      shell:
+        cmd: jps
+      register: jps_output
+
+    - debug:
+        msg: "{{ jps_output }}"
+
+    - name: Check for listening services
+      shell:
+        cmd: ss -tulpen | grep -E "9000|8040|9870|8088|9864"
+      register: ss_output
+
+    - debug:
+        msg: "{{ ss_output }}"

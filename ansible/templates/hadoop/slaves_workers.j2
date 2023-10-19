@@ -1,0 +1,8 @@
+{% for item in groups['hadoop_master'] %}
+{% set short_name = item.split('.') %}
+{{ short_name[0] }}
+{% endfor %}
+{% for item in groups['hadoop_slaves'] %}
+{% set short_name = item.split('.') %}
+{{ short_name[0] }}
+{% endfor %}

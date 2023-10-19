@@ -1,0 +1,13 @@
+---
+hadoop_master:
+  hosts:
+    bd0071342901:
+
+hadoop_slaves:
+  hosts:
+    bd0071342902:
+
+hadoop_nodes:
+  children:
+    hadoop_master:
+    hadoop_slaves:
